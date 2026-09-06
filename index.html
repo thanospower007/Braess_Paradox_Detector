@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector de Paradoja de Braess</title>
+    <meta name="description" content="Detector de Paradoja de Braess sobre redes viales reales. Microsimulación IDM con réplicas e inferencia estadística.">
+
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+          crossorigin="anonymous" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+            crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"
+            integrity="sha384-R20A21rA3nJRRwjdVR4H9eXpkhB5B4Zqqvk5a98BeeeDBMBfOgDAFmnKU67PGjIk"
+            crossorigin="anonymous" defer></script>
+
+    <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22&gt;&lt;text y=%2214%22 font-size=%2214%22&gt;🛣️&lt;/text&gt;&lt;/svg&gt;">
+
+    <script src="app.js" defer></script>
+</head>
+
+<body>
+    <noscript>
+        <div class="noscript-warning">
+            <strong>JavaScript es necesario</strong> para usar esta aplicación. Por favor habilítelo y recargue la página.
+        </div>
+    </noscript>
+
+    <div class="container">
+        <header role="banner">
+            <h1>Detector de Paradoja de Braess y Optimizador de Red Vial</h1>
+            <p class="subtitle">Microsimulación IDM con réplicas e inferencia estadística (Wilcoxon pareado, FDR Benjamini-Hochberg)</p>
+        </header>
+
+        <div class="main-content">
+
+            <aside class="controls-panel" aria-label="Controles de simulación">
+                <div class="control-group">
+                    <h3>Configuración</h3>
+                    <div class="input-group">
+                        <label for="place-input">Ciudad o área:</label>
+                        <input type="text" id="place-input" name="place"
+                               value="Guatapé, Antioquia, Colombia"
+                               placeholder="ej.: Guatapé, Antioquia, Colombia"
+                               autocomplete="off" maxlength="200"
+                               aria-describedby="place-help">
+                        <small id="place-help" class="input-help">
+                            Formato sugerido: <em>Municipio, Departamento, País</em>.
+                        </small>
+                    </div>
+                </div>
+
+                <details class="control-group advanced-params">
+                    <summary>Parámetros avanzados</summary>
+
+                    <div class="auto-tune-control">
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="param-auto-tune" checked>
+                            <span><strong>Auto-ajustar parámetros</strong> según el tamaño de la red</span>
+                        </label>
+                        <small class="input-help">
+                            Cuando está activo, los valores debajo se sugieren automáticamente al
+                            ejecutar. Tu input para cualquier campo siempre toma precedencia.
+                        </small>
+                    </div>
+
+                    <div class="input-group compact">
+                        <label for="param-budget">Tiempo objetivo (min):</label>
+                        <input type="number" id="param-budget" min="1" max="600" step="1" value="30">
+                        <small class="input-help">
+                            Presupuesto de tiempo paralelo. El auto-tune ajusta n_trips para
+                            no excederlo.
+                        </small>
+                    </div>
+
+                    <div class="input-group compact">
+                        <label for="param-fallback-radius">Radio de fallback (m):</label>
+                        <input type="number" id="param-fallback-radius" min="200" max="10000" step="100" value="1500">
+                        <small class="input-help">
+                            Si el lugar no resuelve a polígono administrativo (ej. barrios
+                            pequeños), se descarga la red en este radio alrededor del punto.
+                        </small>
+                    </div>
+
+                    <div class="param-grid">
+                        <div class="input-group compact">
+                            <label for="param-n-trips">Viajes (n_trips):</label>
+                            <input type="number" id="param-n-trips" min="100" max="20000" step="100" placeholder="auto">
+                        </div>
+                        <div class="input-group compact">
+                            <label for="param-n-replications">Réplicas:</label>
+                            <input type="number" id="param-n-replications" min="3" max="50" step="1" placeholder="auto">
+                        </div>
+                        <div class="input-group compact">
+                            <label for="param-min-path-len">Long. mínima de ruta (nodos):</label>
+                            <input type="number" id="param-min-path-len" min="2" max="20" step="1" placeholder="auto">
+                        </div>
+                        <div class="input-group compact">
+                            <label for="param-duration">Duración simulada (min):</label>
+                            <input type="number" id="param-duration" min="2" max="60" step="1" placeholder="auto">
+                        </div>
+                        <div class="input-group compact">
+                            <label for="param-min-effect">Efecto mínimo en ATT (%):</label>
+                            <input type="number" id="param-min-effect" min="0.1" max="20" step="0.1" placeholder="1.0">
+                        </div>
+                        <div class="input-group compact">
+                            <label for="param-fdr-alpha">α (FDR):</label>
+                            <input type="number" id="param-fdr-alpha" min="0.001" max="0.2" step="0.01" placeholder="0.05">
+                        </div>
+                    </div>
+
+                    <div id="auto-tune-summary" class="auto-tune-summary" hidden>
+                        <strong>Sugerencias para esta red:</strong>
+                        <div id="auto-tune-summary-content"></div>
+                    </div>
+                </details>
+
+                <div class="control-group">
+                    <h3>Control de simulación</h3>
+                    <button id="simulate-btn" type="button">Ejecutar simulación</button>
+                    <button id="cancel-btn" type="button" class="cancel-btn" hidden>Cancelar</button>
+                </div>
+
+                <div class="status-panel" aria-live="polite" aria-atomic="true">
+                    <div id="status-message">Listo para ejecutar simulación.</div>
+                    <div id="progress-bar" class="progress-bar" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <div id="progress-detail" class="progress-detail"></div>
+
+                    <details class="activity-log-panel">
+                        <summary>Registro de actividad</summary>
+                        <ul id="activity-log" class="activity-log" aria-live="polite"></ul>
+                    </details>
+                </div>
+
+                <div class="export-section">
+                    <h3>Exportar resultados</h3>
+                    <button id="export-geojson" type="button" disabled>Exportar GeoJSON</button>
+                    <button id="export-csv" type="button" disabled>Exportar CSV</button>
+                    <button id="export-modified-graph" type="button" disabled>Exportar red modificada (.graphml)</button>
+                </div>
+            </aside>
+
+            <section class="map-container" aria-label="Mapa de la red vial">
+                <div id="map"></div>
+            </section>
+
+            <section class="results-panel" aria-label="Resultados de la simulación">
+                <div class="metrics-panel">
+                    <h3>Métricas del estudio</h3>
+                    <div id="metrics-content" aria-live="polite">
+                        <p class="placeholder">Ejecute la simulación para ver las métricas.</p>
+                    </div>
+                </div>
+
+                <div class="recommendations-panel">
+                    <h3>Top recomendaciones (en mapa)</h3>
+                    <div id="top-recommendations-content" aria-live="polite">
+                        <p class="placeholder">Ejecute la simulación para ver las recomendaciones.</p>
+                    </div>
+                </div>
+
+                <div class="recommendations-panel">
+                    <h3>Otras recomendaciones</h3>
+                    <div id="all-recommendations-content" aria-live="polite">
+                        <p class="placeholder">—</p>
+                    </div>
+                    <button id="show-more-btn" type="button"
+                            aria-expanded="false" aria-controls="hidden-recommendations"
+                            hidden>Ver más</button>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="legend">
+            <span class="legend-item"><span class="swatch high-remove"></span>Remoción de alto impacto</span>
+            <span class="legend-item"><span class="swatch medium-remove"></span>Remoción media</span>
+            <span class="legend-item"><span class="swatch low-remove"></span>Remoción baja</span>
+            <span class="legend-item"><span class="swatch high-add"></span>Adición de alto impacto</span>
+            <span class="legend-item"><span class="swatch medium-add"></span>Adición media</span>
+            <span class="legend-item"><span class="swatch low-add"></span>Adición baja</span>
+            <span class="legend-item"><span class="swatch network"></span>Red base</span>
+        </footer>
+    </div>
+</body>
+
+</html>
